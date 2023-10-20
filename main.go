@@ -13,9 +13,29 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// keyboard
+var dayKeyboard = tgbotapi.NewReplyKeyboard(
+	tgbotapi.NewKeyboardButtonRow(
+		tgbotapi.NewKeyboardButton("Сегодня"),
+		tgbotapi.NewKeyboardButton("Завтра"),
+	),
+)
+
+//
+
 var (
-	userInputStorage = make(map[int64]string) // Хранилище пользовательского ввода
-	mutex            sync.Mutex
+	userInputStorage  = make(map[int64]UserInput) // Хранилище пользовательского ввода
+	mutexInputStorage sync.Mutex
+)
+
+type UserInput struct {
+	Oid  string
+	Data string
+}
+
+var (
+	userComandStorage  = make(map[int64]string) // Хранилище команд введеное пользователем
+	mutexComandStorage sync.Mutex
 )
 
 const (
@@ -24,6 +44,11 @@ const (
 	URL_REQUEST_LECTURER    = "https://www.ugrasu.ru/api/directory/lecturers"
 	URL_REQUEST_GROUPS      = "https://www.ugrasu.ru/api/directory/groups"
 	URL_REQUEST_AUDITORIUMS = "https://www.ugrasu.ru/api/directory/auditoriums"
+)
+
+const (
+	START_MESSAGE = "Привет! Я тг бот рассписание ЮГУ\nЧтобы узнать что я могу введи - /help"
+	HELP_MESSAGE  = "Я умею находить рассписание\nПо номеру группы - /group\nПо номеру аудитории - /auditorium\nПо ФИО преподователя - /lecturer"
 )
 
 func main() {
@@ -41,44 +66,95 @@ func main() {
 	updateConfig.Timeout = UPDATE_CONFIG_TIMEOUT
 
 	for update := range bot.GetUpdatesChan(updateConfig) {
-
-		if update.CallbackQuery != nil && update.CallbackQuery.Data != "" {
-			data := update.CallbackQuery.Data
-			timeTableMessage(&update, bot, userInputStorage[update.CallbackQuery.Message.Chat.ID], data)
-		}
-
-		if update.Message != nil {
+		if update.Message.IsCommand() {
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, " ")
+			command := update.Message.Command()
+			switch command {
+			case "start":
+				msg.Text = START_MESSAGE
+
+			case "help":
+				msg.Text = HELP_MESSAGE
+
+			case "group":
+				saveUserCommand(update.Message.Chat.ID, command)
+				msg.Text = "Введите номер группы:"
+
+			case "auditorium":
+				saveUserCommand(update.Message.Chat.ID, command)
+				msg.Text = "Введите номер аудитории:"
+
+			case "lecturer":
+				saveUserCommand(update.Message.Chat.ID, command)
+				msg.Text = "Введите ФИО или Фамилию И.О. преподователя:"
+
+			}
+			if _, err := bot.Send(msg); err != nil {
+				log.Panic(err)
+			}
+		} else if update.Message != nil {
+			//
 			inputUser := update.Message.Text
 			inputUser = strings.TrimSpace(inputUser)
-			if groupOid, found := foundGroups(inputUser); found {
-				msg.Text = "Группа введена правильно!"
-				saveUserInput(update.Message.Chat.ID, groupOid)
-				row1 := []tgbotapi.InlineKeyboardButton{
-					getKeyboardRow("Сегодня", "today_groupOid"),
-					getKeyboardRow("Завтра", "tomorrow_groupOid"),
+			//
+			userID := update.Message.Chat.ID
+			//
+			command := getUserCommand(userID)
+			//
+			msg := tgbotapi.NewMessage(userID, " ")
+			switch command {
+			case "group":
+				if groupOid, found := foundGroups(inputUser); found {
+					msg.Text = "Группа введена правильно!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+					saveUserInputOid(userID, groupOid)
+					//
+					saveUserCommand(userID, "data")
+					//
+					msg.ReplyMarkup = dayKeyboard
+				} else {
+					msg.Text = "Ничего не нашел"
 				}
-				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(row1)
-			} else if lecturerOid, found := foundLecturer(inputUser); found {
-				msg.Text = "Преподаватель найден!"
-				saveUserInput(update.Message.Chat.ID, lecturerOid)
-				row1 := []tgbotapi.InlineKeyboardButton{
-					getKeyboardRow("Сегодня", "today_lecturerOid"),
-					getKeyboardRow("Завтра", "tomorrow_lecturerOid"),
+			case "lecturer":
+				if lecturerOid, found := foundLecturer(inputUser); found {
+					msg.Text = "Преподаватель найден!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+					saveUserInputOid(userID, lecturerOid)
+					//
+					saveUserCommand(userID, "data")
+					//
+					msg.ReplyMarkup = dayKeyboard
+				} else {
+					msg.Text = "Ничего не нашел"
 				}
-				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(row1)
-			} else if auditoriumOid, found := foundAuditoriums(inputUser); found {
-				msg.Text = "Аудитория найдена!"
-				saveUserInput(update.Message.Chat.ID, auditoriumOid)
-				row1 := []tgbotapi.InlineKeyboardButton{
-					getKeyboardRow("Сегодня", "today_auditoriumOid"),
-					getKeyboardRow("Завтра", "tomorrow_auditoriumOid"),
+			case "auditorium":
+				if auditoriumOid, found := foundAuditoriums(inputUser); found {
+					msg.Text = "Аудитория найдена!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+					saveUserInputOid(userID, auditoriumOid)
+					//
+					saveUserCommand(userID, "data")
+					//
+					msg.ReplyMarkup = dayKeyboard
+				} else {
+					msg.Text = "Ничего не нашел"
 				}
-				msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(row1)
-			} else {
-				msg.Text = "Ничего не нашел"
-			}
+			case "data":
+				switch inputUser {
+				case "Сегодня":
+					saveUserInputData(userID, todayDate())
 
+				case "Завтра":
+					saveUserInputData(userID, tomorrowDate())
+
+				default:
+					saveUserInputData(userID, inputUser)
+
+				}
+				timeTableMessage(&update, bot, getUserInput(userID))
+				deleteUserCommand(userID)
+				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+				msg.Text = "Все!"
+			default:
+				msg.Text = "Не понял!"
+			}
 			if _, err := bot.Send(msg); err != nil {
 				log.Panic(err)
 			}
@@ -86,12 +162,55 @@ func main() {
 	}
 }
 
-func saveUserInput(userID int64, input string) {
-	mutex.Lock()
-	userInputStorage[userID] = input
-	mutex.Unlock()
+func saveUserInputOid(userID int64, input string) {
+	mutexInputStorage.Lock()
+	userInput := userInputStorage[userID]
+	userInput.Oid = input
+	userInputStorage[userID] = userInput
+	mutexInputStorage.Unlock()
 }
 
+func saveUserInputData(userID int64, input string) {
+	mutexInputStorage.Lock()
+	userInput := userInputStorage[userID]
+	userInput.Data = input
+	userInputStorage[userID] = userInput
+	mutexInputStorage.Unlock()
+}
+
+func getUserInput(userID int64) UserInput {
+	mutexInputStorage.Lock()
+	userInput := userInputStorage[userID]
+	mutexInputStorage.Unlock()
+	return userInput
+}
+
+func deleteUserInput(userID int64) {
+	mutexInputStorage.Lock()
+	delete(userInputStorage, userID)
+	mutexInputStorage.Unlock()
+}
+
+func saveUserCommand(userID int64, input string) {
+	mutexComandStorage.Lock()
+	userComandStorage[userID] = input
+	mutexComandStorage.Unlock()
+}
+
+func getUserCommand(userID int64) string {
+	mutexComandStorage.Lock()
+	command := userComandStorage[userID]
+	mutexComandStorage.Unlock()
+	return command
+}
+
+func deleteUserCommand(userID int64) {
+	mutexComandStorage.Lock()
+	delete(userComandStorage, userID)
+	mutexComandStorage.Unlock()
+}
+
+// ПОИСК !!! переделать на sqlite  !!!
 func foundAuditoriums(messageUser string) (string, bool) {
 	arrayAuditoriums := requestAuditoriumsJSON()
 	for i := 0; i < len(arrayAuditoriums); i++ {
@@ -122,11 +241,14 @@ func foundLecturer(messageUser string) (string, bool) {
 	return "", false
 }
 
-func timeTableMessage(update *tgbotapi.Update, bot *tgbotapi.BotAPI, groupOid string, time string) {
+/////////
 
-	msg := tgbotapi.NewMessage(update.CallbackQuery.Message.Chat.ID, "Введите номер группы")
+// Формирование и отправка сообщения пользователю
+func timeTableMessage(update *tgbotapi.Update, bot *tgbotapi.BotAPI, userInput UserInput) {
 
-	arrayLesson := requestLessonJSON(groupOid, time)
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, " ")
+
+	arrayLesson := requestLessonJSON(userInput)
 
 	if len(arrayLesson) == 0 {
 		msg.Text = "Расписания нет!"
@@ -153,7 +275,7 @@ func timeTableMessage(update *tgbotapi.Update, bot *tgbotapi.BotAPI, groupOid st
 			textMessage += "\n" + string(arrayLesson[i].SubGroup)
 		}
 		if i != len(arrayLesson)-1 {
-			textMessage += "-----------------\n"
+			textMessage += "\n-----------------\n"
 		}
 		if len(textMessage) > 2000 {
 			msg.Text = textMessage
@@ -176,25 +298,10 @@ func getKeyboardRow(buttonText, buttonCode string) tgbotapi.InlineKeyboardButton
 	return tgbotapi.NewInlineKeyboardButtonData(buttonText, buttonCode)
 }
 
-func requestLessonJSON(oid string, time string) []Lesson {
+func requestLessonJSON(userInput UserInput) []Lesson {
 	client := &http.Client{}
 	request := URL_REQUEST_LESSON
-	switch time {
-	case "today_groupOid":
-		request += todayDate() + "&todate=" + todayDate() + "&groupOid=" + oid
-	case "tomorrow_groupOid":
-		request += tomorrowDate() + "&todate=" + tomorrowDate() + "&groupOid=" + oid
-	case "today_lecturerOid":
-		request += todayDate() + "&todate=" + todayDate() + "&lectureroid=" + oid
-	case "tomorrow_lecturerOid":
-		request += tomorrowDate() + "&todate=" + tomorrowDate() + "&lectureroid=" + oid
-	case "today_auditoriumOid":
-		request += todayDate() + "&todate=" + todayDate() + "&auditoriumOid=" + oid
-	case "tomorrow_auditoriumOid":
-		request += tomorrowDate() + "&todate=" + tomorrowDate() + "&auditoriumOid=" + oid
-	default:
-		return []Lesson{}
-	}
+	request += userInput.Data + "&todate=" + userInput.Data + "&groupOid=" + userInput.Oid
 	req, err := http.NewRequest("GET", request, nil)
 	if err != nil {
 		return []Lesson{}

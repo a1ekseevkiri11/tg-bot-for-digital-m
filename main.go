@@ -18,6 +18,24 @@ var dayKeyboard = tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButton("Сегодня"),
 		tgbotapi.NewKeyboardButton("Завтра"),
 	),
+	tgbotapi.NewKeyboardButtonRow(
+		tgbotapi.NewKeyboardButton("/exit"),
+	),
+)
+
+var commandKeyboard = tgbotapi.NewReplyKeyboard(
+	tgbotapi.NewKeyboardButtonRow(
+		tgbotapi.NewKeyboardButton("/help"),
+	),
+	tgbotapi.NewKeyboardButtonRow(
+		tgbotapi.NewKeyboardButton("/group"),
+	),
+	tgbotapi.NewKeyboardButtonRow(
+		tgbotapi.NewKeyboardButton("/auditorium"),
+	),
+	tgbotapi.NewKeyboardButtonRow(
+		tgbotapi.NewKeyboardButton("/lecturer"),
+	),
 )
 
 // /////////FSM(на минималках)
@@ -112,8 +130,10 @@ const (
 	LECTURER_FOUND_AND_EXPECTATION_DATE_MESSAGE   = "Преподаватель найден!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
 	AUDITORIUM_FOUND_AND_EXPECTATION_DATE_MESSAGE = "Аудитория найдена!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
 	DIDNT_UNDERSTAND_MESSAGE                      = "Не понял!"
+	DIDNT_UNDERSTAND_COMMAND_MESSAGE              = "Не знаю такую команду!"
 	NOT_FOUND_MESSAGE                             = "Ничего не нашел"
 	DATE_MESSAGE                                  = "Можешь ввести другую дату в формате ММ-ДД-ГГГГ или нажать на кнопку"
+	EXIT_MESSAGE                                  = "EXIT"
 )
 
 // config
@@ -143,25 +163,35 @@ func main() {
 			switch command {
 			case "start":
 				msg.Text = START_MESSAGE
+				msg.ReplyMarkup = commandKeyboard
 
 			case "help":
 				msg.Text = HELP_MESSAGE
+				msg.ReplyMarkup = commandKeyboard
 
 			case "group":
 				saveUserCommand(userID, command)
-				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+				msg.ReplyMarkup = commandKeyboard
 				msg.Text = GROUP_EXPECTATION_MESSAGE
 
 			case "auditorium":
 				saveUserCommand(userID, command)
-				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+				msg.ReplyMarkup = commandKeyboard
 				msg.Text = AUDITORIUM_EXPECTATION_MESSAGE
 
 			case "lecturer":
 				saveUserCommand(userID, command)
-				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+				msg.ReplyMarkup = commandKeyboard
 				msg.Text = LECTURER_EXPECTATION_MESSAGE
 
+			case "exit":
+				deleteUserCommand(userID)
+				deleteUserInput(userID)
+				msg.ReplyMarkup = commandKeyboard
+				msg.Text = EXIT_MESSAGE
+
+			default:
+				msg.Text = DIDNT_UNDERSTAND_COMMAND_MESSAGE
 			}
 			if _, err := bot.Send(msg); err != nil {
 				log.Panic(err)

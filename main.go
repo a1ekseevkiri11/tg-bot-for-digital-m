@@ -6,14 +6,13 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// keyboard
+// KEYBOARD
 var dayKeyboard = tgbotapi.NewReplyKeyboard(
 	tgbotapi.NewKeyboardButtonRow(
 		tgbotapi.NewKeyboardButton("Сегодня"),
@@ -21,156 +20,28 @@ var dayKeyboard = tgbotapi.NewReplyKeyboard(
 	),
 )
 
-//
+// /////////FSM(на минималках)
+type UserInput struct {
+	Oid              string
+	Data             string
+	RequestParameter string
+}
 
 var (
 	userInputStorage  = make(map[int64]UserInput) // Хранилище пользовательского ввода
 	mutexInputStorage sync.Mutex
 )
 
-type UserInput struct {
-	Oid  string
-	Data string
-}
-
-var (
-	userComandStorage  = make(map[int64]string) // Хранилище команд введеное пользователем
-	mutexComandStorage sync.Mutex
-)
-
-const (
-	UPDATE_CONFIG_TIMEOUT   = 60
-	URL_REQUEST_LESSON      = "https://www.ugrasu.ru/api/directory/lessons?fromdate="
-	URL_REQUEST_LECTURER    = "https://www.ugrasu.ru/api/directory/lecturers"
-	URL_REQUEST_GROUPS      = "https://www.ugrasu.ru/api/directory/groups"
-	URL_REQUEST_AUDITORIUMS = "https://www.ugrasu.ru/api/directory/auditoriums"
-)
-
-const (
-	START_MESSAGE = "Привет! Я тг бот рассписание ЮГУ\nЧтобы узнать что я могу введи - /help"
-	HELP_MESSAGE  = "Я умею находить рассписание\nПо номеру группы - /group\nПо номеру аудитории - /auditorium\nПо ФИО преподователя - /lecturer"
-)
-
-func main() {
-	var err error
-	bot, err := tgbotapi.NewBotAPI("5798412654:AAGS0jVTr7bLLp0V2tK9ke7dv8yM1fIj9YU")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	bot.Debug = true
-
-	log.Printf("Authorized on account %s", bot.Self.UserName)
-
-	updateConfig := tgbotapi.NewUpdate(0)
-	updateConfig.Timeout = UPDATE_CONFIG_TIMEOUT
-
-	for update := range bot.GetUpdatesChan(updateConfig) {
-		if update.Message.IsCommand() {
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, " ")
-			command := update.Message.Command()
-			switch command {
-			case "start":
-				msg.Text = START_MESSAGE
-
-			case "help":
-				msg.Text = HELP_MESSAGE
-
-			case "group":
-				saveUserCommand(update.Message.Chat.ID, command)
-				msg.Text = "Введите номер группы:"
-
-			case "auditorium":
-				saveUserCommand(update.Message.Chat.ID, command)
-				msg.Text = "Введите номер аудитории:"
-
-			case "lecturer":
-				saveUserCommand(update.Message.Chat.ID, command)
-				msg.Text = "Введите ФИО или Фамилию И.О. преподователя:"
-
-			}
-			if _, err := bot.Send(msg); err != nil {
-				log.Panic(err)
-			}
-		} else if update.Message != nil {
-			//
-			inputUser := update.Message.Text
-			inputUser = strings.TrimSpace(inputUser)
-			//
-			userID := update.Message.Chat.ID
-			//
-			command := getUserCommand(userID)
-			//
-			msg := tgbotapi.NewMessage(userID, " ")
-			switch command {
-			case "group":
-				if groupOid, found := foundGroups(inputUser); found {
-					msg.Text = "Группа введена правильно!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
-					saveUserInputOid(userID, groupOid)
-					//
-					saveUserCommand(userID, "data")
-					//
-					msg.ReplyMarkup = dayKeyboard
-				} else {
-					msg.Text = "Ничего не нашел"
-				}
-			case "lecturer":
-				if lecturerOid, found := foundLecturer(inputUser); found {
-					msg.Text = "Преподаватель найден!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
-					saveUserInputOid(userID, lecturerOid)
-					//
-					saveUserCommand(userID, "data")
-					//
-					msg.ReplyMarkup = dayKeyboard
-				} else {
-					msg.Text = "Ничего не нашел"
-				}
-			case "auditorium":
-				if auditoriumOid, found := foundAuditoriums(inputUser); found {
-					msg.Text = "Аудитория найдена!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
-					saveUserInputOid(userID, auditoriumOid)
-					//
-					saveUserCommand(userID, "data")
-					//
-					msg.ReplyMarkup = dayKeyboard
-				} else {
-					msg.Text = "Ничего не нашел"
-				}
-			case "data":
-				switch inputUser {
-				case "Сегодня":
-					saveUserInputData(userID, todayDate())
-
-				case "Завтра":
-					saveUserInputData(userID, tomorrowDate())
-
-				default:
-					saveUserInputData(userID, inputUser)
-
-				}
-				timeTableMessage(&update, bot, getUserInput(userID))
-				deleteUserCommand(userID)
-				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
-				msg.Text = "Все!"
-			default:
-				msg.Text = "Не понял!"
-			}
-			if _, err := bot.Send(msg); err != nil {
-				log.Panic(err)
-			}
-		}
-	}
-}
-
-func saveUserInputOid(userID int64, input string) {
+func saveUserInputOid(userID int64, oid string, requestParameter string) {
 	mutexInputStorage.Lock()
 	userInput := userInputStorage[userID]
-	userInput.Oid = input
+	userInput.Oid = oid
+	userInput.RequestParameter = requestParameter
 	userInputStorage[userID] = userInput
 	mutexInputStorage.Unlock()
 }
 
-func saveUserInputData(userID int64, input string) {
+func saveUserInputDate(userID int64, input string) {
 	mutexInputStorage.Lock()
 	userInput := userInputStorage[userID]
 	userInput.Data = input
@@ -191,6 +62,12 @@ func deleteUserInput(userID int64) {
 	mutexInputStorage.Unlock()
 }
 
+// //
+var (
+	userComandStorage  = make(map[int64]string) // Хранилище команд введеное пользователем
+	mutexComandStorage sync.Mutex
+)
+
 func saveUserCommand(userID int64, input string) {
 	mutexComandStorage.Lock()
 	userComandStorage[userID] = input
@@ -208,6 +85,147 @@ func deleteUserCommand(userID int64) {
 	mutexComandStorage.Lock()
 	delete(userComandStorage, userID)
 	mutexComandStorage.Unlock()
+}
+
+///////////
+
+// TIME FUNCTION
+func todayDate() string {
+	today := time.Now()
+	return today.Format("01-02-2006")
+}
+
+func tomorrowDate() string {
+	today := time.Now()
+	tomorrow := today.AddDate(0, 0, 1)
+	return tomorrow.Format("01-02-2006")
+}
+
+// MESSAGE
+const (
+	START_MESSAGE                                 = "Привет! Я тг бот рассписание ЮГУ\nЧтобы узнать что я могу введи - /help"
+	HELP_MESSAGE                                  = "Я умею находить рассписание\nПо номеру группы - /group\nПо номеру аудитории - /auditorium\nПо ФИО преподователя - /lecturer"
+	GROUP_EXPECTATION_MESSAGE                     = "Введите номер группы:"
+	AUDITORIUM_EXPECTATION_MESSAGE                = "Введите номер аудитории:"
+	LECTURER_EXPECTATION_MESSAGE                  = "Введите ФИО или Фамилию И.О. преподователя:"
+	GROUP_FOUND_AND_EXPECTATION_DATE_MESSAGE      = "Группа введена правильно!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+	LECTURER_FOUND_AND_EXPECTATION_DATE_MESSAGE   = "Преподаватель найден!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+	AUDITORIUM_FOUND_AND_EXPECTATION_DATE_MESSAGE = "Аудитория найдена!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+	DIDNT_UNDERSTAND_MESSAGE                      = "Не понял!"
+	NOT_FOUND_MESSAGE                             = "Ничего не нашел"
+	DATE_MESSAGE                                  = "Можешь ввести другую дату в формате ММ-ДД-ГГГГ или нажать на кнопку"
+)
+
+// config
+const (
+	UPDATE_CONFIG_TIMEOUT = 60
+)
+
+func main() {
+	var err error
+	bot, err := tgbotapi.NewBotAPI("5798412654:AAGS0jVTr7bLLp0V2tK9ke7dv8yM1fIj9YU")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	bot.Debug = true
+
+	log.Printf("Authorized on account %s", bot.Self.UserName)
+
+	updateConfig := tgbotapi.NewUpdate(0)
+	updateConfig.Timeout = UPDATE_CONFIG_TIMEOUT
+
+	for update := range bot.GetUpdatesChan(updateConfig) {
+		if update.Message.IsCommand() {
+			userID := update.Message.Chat.ID
+			msg := tgbotapi.NewMessage(userID, " ")
+			command := update.Message.Command()
+			switch command {
+			case "start":
+				msg.Text = START_MESSAGE
+
+			case "help":
+				msg.Text = HELP_MESSAGE
+
+			case "group":
+				saveUserCommand(userID, command)
+				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+				msg.Text = GROUP_EXPECTATION_MESSAGE
+
+			case "auditorium":
+				saveUserCommand(userID, command)
+				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+				msg.Text = AUDITORIUM_EXPECTATION_MESSAGE
+
+			case "lecturer":
+				saveUserCommand(userID, command)
+				msg.ReplyMarkup = tgbotapi.NewRemoveKeyboard(true)
+				msg.Text = LECTURER_EXPECTATION_MESSAGE
+
+			}
+			if _, err := bot.Send(msg); err != nil {
+				log.Panic(err)
+			}
+		} else if update.Message != nil {
+			inputUser := update.Message.Text
+			userID := update.Message.Chat.ID
+			command := getUserCommand(userID)
+			msg := tgbotapi.NewMessage(userID, "")
+			switch command {
+
+			case "group":
+				if groupOid, found := foundGroups(inputUser); found {
+					msg.Text = GROUP_FOUND_AND_EXPECTATION_DATE_MESSAGE
+					saveUserInputOid(userID, groupOid, GROUP_PARAMETR_REQUEST)
+					saveUserCommand(userID, "date")
+					msg.ReplyMarkup = dayKeyboard
+				}
+
+			case "lecturer":
+				if lecturerOid, found := foundLecturer(inputUser); found {
+					msg.Text = LECTURER_FOUND_AND_EXPECTATION_DATE_MESSAGE
+					saveUserInputOid(userID, lecturerOid, LECTURER_PARAMETR_REQUEST)
+					saveUserCommand(userID, "date")
+					msg.ReplyMarkup = dayKeyboard
+				}
+
+			case "auditorium":
+				if auditoriumOid, found := foundAuditoriums(inputUser); found {
+					msg.Text = AUDITORIUM_FOUND_AND_EXPECTATION_DATE_MESSAGE
+					saveUserInputOid(userID, auditoriumOid, AUDITORIUM_PARAMETR_REQUEST)
+					saveUserCommand(userID, "date")
+					msg.ReplyMarkup = dayKeyboard
+				}
+
+			case "date":
+				switch inputUser {
+
+				case "Сегодня":
+					saveUserInputDate(userID, todayDate())
+
+				case "Завтра":
+					saveUserInputDate(userID, tomorrowDate())
+
+				default:
+					saveUserInputDate(userID, inputUser)
+
+				}
+				timeTableMessage(&update, bot, getUserInput(userID))
+				msg.Text = DATE_MESSAGE
+
+			default:
+				msg.Text = DIDNT_UNDERSTAND_MESSAGE
+			}
+
+			if msg.Text == "" {
+				msg.Text = NOT_FOUND_MESSAGE
+			}
+
+			if _, err := bot.Send(msg); err != nil {
+				log.Panic(err)
+			}
+		}
+	}
 }
 
 // ПОИСК !!! переделать на sqlite  !!!
@@ -241,9 +259,7 @@ func foundLecturer(messageUser string) (string, bool) {
 	return "", false
 }
 
-/////////
-
-// Формирование и отправка сообщения пользователю
+// generating and sending a message to the user
 func timeTableMessage(update *tgbotapi.Update, bot *tgbotapi.BotAPI, userInput UserInput) {
 
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, " ")
@@ -294,14 +310,21 @@ func timeTableMessage(update *tgbotapi.Update, bot *tgbotapi.BotAPI, userInput U
 	}
 }
 
-func getKeyboardRow(buttonText, buttonCode string) tgbotapi.InlineKeyboardButton {
-	return tgbotapi.NewInlineKeyboardButtonData(buttonText, buttonCode)
-}
+// REQUEST AND PARSING JSON FROM API
+const (
+	URL_REQUEST_LESSON          = "https://www.ugrasu.ru/api/directory/lessons?fromdate="
+	URL_REQUEST_LECTURER        = "https://www.ugrasu.ru/api/directory/lecturers"
+	URL_REQUEST_GROUPS          = "https://www.ugrasu.ru/api/directory/groups"
+	URL_REQUEST_AUDITORIUMS     = "https://www.ugrasu.ru/api/directory/auditoriums"
+	GROUP_PARAMETR_REQUEST      = "&groupOid="
+	LECTURER_PARAMETR_REQUEST   = "&lectureroid="
+	AUDITORIUM_PARAMETR_REQUEST = "&auditoriumoid="
+)
 
 func requestLessonJSON(userInput UserInput) []Lesson {
 	client := &http.Client{}
 	request := URL_REQUEST_LESSON
-	request += userInput.Data + "&todate=" + userInput.Data + "&groupOid=" + userInput.Oid
+	request += userInput.Data + "&todate=" + userInput.Data + userInput.RequestParameter + userInput.Oid
 	req, err := http.NewRequest("GET", request, nil)
 	if err != nil {
 		return []Lesson{}
@@ -552,21 +575,4 @@ type Lesson struct {
 	URL1Description    any    `json:"url1_description"`
 	URL2               any    `json:"url2"`
 	URL2Description    any    `json:"url2_description"`
-}
-
-type Config struct {
-	UPDATE_CONFIG_TIMEOUT int `json:"UPDATE_CONFIG_TIMEOUT"`
-}
-
-//time function
-
-func todayDate() string {
-	today := time.Now()
-	return today.Format("01-02-2006")
-}
-
-func tomorrowDate() string {
-	today := time.Now()
-	tomorrow := today.AddDate(0, 0, 1)
-	return tomorrow.Format("01-02-2006")
 }

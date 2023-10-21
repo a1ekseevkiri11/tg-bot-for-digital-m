@@ -169,10 +169,12 @@ const (
 // config
 const (
 	UPDATE_CONFIG_TIMEOUT = 60
-	BOT_TOKEN             = "5798412654:AAGS0jVTr7bLLp0V2tK9ke7dv8yM1fIj9YU"
 )
 
 func main() {
+	var BOT_TOKEN string
+	fmt.Println("Введите TOKEN:")
+	fmt.Scanf("%s\n", &BOT_TOKEN)
 	var err error
 	db, err := sql.Open("sqlite3", "data base.db")
 	if err != nil {

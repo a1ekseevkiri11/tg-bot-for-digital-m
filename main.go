@@ -1,16 +1,34 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	_ "github.com/mattn/go-sqlite3"
 )
+
+// SUPPORT FUNCTION
+func deleteSpace(str string) string {
+	return strings.ReplaceAll(str, " ", "")
+}
+
+func lowercase(str string) string {
+	return strings.ToLower(str)
+}
+
+func conversionName(str string) string {
+	str = deleteSpace(str)
+	str = lowercase(str)
+	return str
+}
 
 // KEYBOARD
 var dayKeyboard = tgbotapi.NewReplyKeyboard(
@@ -38,7 +56,7 @@ var commandKeyboard = tgbotapi.NewReplyKeyboard(
 	),
 )
 
-// /////////FSM(на минималках)
+// /////////Хранение комананды и информации введеной пользователем
 type UserInput struct {
 	Oid              string
 	Data             string
@@ -121,29 +139,48 @@ func tomorrowDate() string {
 
 // MESSAGE
 const (
-	START_MESSAGE                                 = "Привет! Я тг бот рассписание ЮГУ\nЧтобы узнать что я могу введи - /help"
-	HELP_MESSAGE                                  = "Я умею находить рассписание\nПо номеру группы - /group\nПо номеру аудитории - /auditorium\nПо ФИО преподователя - /lecturer"
-	GROUP_EXPECTATION_MESSAGE                     = "Введите номер группы:"
-	AUDITORIUM_EXPECTATION_MESSAGE                = "Введите номер аудитории:"
-	LECTURER_EXPECTATION_MESSAGE                  = "Введите ФИО или Фамилию И.О. преподователя:"
-	GROUP_FOUND_AND_EXPECTATION_DATE_MESSAGE      = "Группа введена правильно!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
-	LECTURER_FOUND_AND_EXPECTATION_DATE_MESSAGE   = "Преподаватель найден!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+	START_MESSAGE = "Привет! Я тг бот рассписание ЮГУ\nЧтобы узнать что я могу введи - /help"
+
+	HELP_MESSAGE = "Я умею находить рассписание\nПо номеру группы - /group\nПо номеру аудитории - /auditorium\nПо ФИО преподователя - /lecturer"
+
+	GROUP_EXPECTATION_MESSAGE = "Введите номер группы:"
+
+	AUDITORIUM_EXPECTATION_MESSAGE = "Введите номер аудитории:"
+
+	LECTURER_EXPECTATION_MESSAGE = "Введите ФИО или Фамилию И.О. преподователя:"
+
+	GROUP_FOUND_AND_EXPECTATION_DATE_MESSAGE = "Группа введена правильно!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+
+	LECTURER_FOUND_AND_EXPECTATION_DATE_MESSAGE = "Преподаватель найден!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
+
 	AUDITORIUM_FOUND_AND_EXPECTATION_DATE_MESSAGE = "Аудитория найдена!\nВведи дату в формате ММ-ДД-ГГГГ или нажми одну из кнопок"
-	DIDNT_UNDERSTAND_MESSAGE                      = "Не понял!"
-	DIDNT_UNDERSTAND_COMMAND_MESSAGE              = "Не знаю такую команду!"
-	NOT_FOUND_MESSAGE                             = "Ничего не нашел"
-	DATE_MESSAGE                                  = "Можешь ввести другую дату в формате ММ-ДД-ГГГГ или нажать на кнопку"
-	EXIT_MESSAGE                                  = "EXIT"
+
+	DIDNT_UNDERSTAND_MESSAGE = "Не понял!"
+
+	DIDNT_UNDERSTAND_COMMAND_MESSAGE = "Не знаю такую команду!"
+
+	NOT_FOUND_MESSAGE = "Ничего не нашел"
+
+	DATE_MESSAGE = "Можешь ввести другую дату в формате ММ-ДД-ГГГГ или нажать на кнопку"
+
+	EXIT_MESSAGE = "EXIT"
 )
 
 // config
 const (
 	UPDATE_CONFIG_TIMEOUT = 60
+	BOT_TOKEN             = "5798412654:AAGS0jVTr7bLLp0V2tK9ke7dv8yM1fIj9YU"
 )
 
 func main() {
 	var err error
-	bot, err := tgbotapi.NewBotAPI("5798412654:AAGS0jVTr7bLLp0V2tK9ke7dv8yM1fIj9YU")
+	db, err := sql.Open("sqlite3", "data base.db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	updateDB(db)
+	bot, err := tgbotapi.NewBotAPI(BOT_TOKEN)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -204,7 +241,7 @@ func main() {
 			switch command {
 
 			case "group":
-				if groupOid, found := foundGroups(inputUser); found {
+				if groupOid, found := foundGroups(db, conversionName(inputUser)); found {
 					msg.Text = GROUP_FOUND_AND_EXPECTATION_DATE_MESSAGE
 					saveUserInputOid(userID, groupOid, GROUP_PARAMETR_REQUEST)
 					saveUserCommand(userID, "date")
@@ -212,7 +249,7 @@ func main() {
 				}
 
 			case "lecturer":
-				if lecturerOid, found := foundLecturer(inputUser); found {
+				if lecturerOid, found := foundLecturer(db, conversionName(inputUser)); found {
 					msg.Text = LECTURER_FOUND_AND_EXPECTATION_DATE_MESSAGE
 					saveUserInputOid(userID, lecturerOid, LECTURER_PARAMETR_REQUEST)
 					saveUserCommand(userID, "date")
@@ -220,7 +257,7 @@ func main() {
 				}
 
 			case "auditorium":
-				if auditoriumOid, found := foundAuditoriums(inputUser); found {
+				if auditoriumOid, found := foundAuditoriums(db, conversionName(inputUser)); found {
 					msg.Text = AUDITORIUM_FOUND_AND_EXPECTATION_DATE_MESSAGE
 					saveUserInputOid(userID, auditoriumOid, AUDITORIUM_PARAMETR_REQUEST)
 					saveUserCommand(userID, "date")
@@ -258,33 +295,110 @@ func main() {
 	}
 }
 
-// ПОИСК !!! переделать на sqlite  !!!
-func foundAuditoriums(messageUser string) (string, bool) {
+// DB
+func updateDB(db *sql.DB) {
 	arrayAuditoriums := requestAuditoriumsJSON()
+	if len(arrayAuditoriums) == 0 {
+		fmt.Println("Request Auditoriums error")
+		return
+	}
+	_, err := db.Exec("DELETE FROM Auditoriums")
+	if err != nil {
+		log.Fatal(err)
+	}
 	for i := 0; i < len(arrayAuditoriums); i++ {
-		if messageUser == arrayAuditoriums[i].Name {
-			return strconv.Itoa(arrayAuditoriums[i].AuditoriumOid), true
+		_, err := db.Exec("INSERT INTO Auditoriums VALUES ($1, $2)",
+			conversionName(arrayAuditoriums[i].Name), arrayAuditoriums[i].AuditoriumOid)
+		if err != nil {
+			log.Fatal(err)
 		}
 	}
-	return "", false
-}
+	fmt.Println("Table Auditoriums update!")
 
-func foundGroups(messageUser string) (string, bool) {
 	arrayGroups := requestGroupsJSON()
+	if len(arrayGroups) == 0 {
+		fmt.Println("Request Groups error")
+		return
+	}
+	_, err = db.Exec("DELETE FROM Groups")
+	if err != nil {
+		log.Fatal(err)
+	}
 	for i := 0; i < len(arrayGroups); i++ {
-		if messageUser == arrayGroups[i].Name {
-			return strconv.Itoa(arrayGroups[i].GroupOid), true
+		_, err := db.Exec("INSERT INTO Groups VALUES ($1, $2)",
+			conversionName(arrayGroups[i].Name), arrayGroups[i].GroupOid)
+		if err != nil {
+			log.Fatal(err)
 		}
 	}
-	return "", false
+	fmt.Println("Table Groups update!")
+
+	arrayLecturer := requestLecturerJSON()
+	if len(arrayLecturer) == 0 {
+		fmt.Println("Request Lecturer error")
+		return
+	}
+	_, err = db.Exec("DELETE FROM Lecturer")
+	if err != nil {
+		log.Fatal(err)
+	}
+	for i := 0; i < len(arrayLecturer); i++ {
+		_, err := db.Exec("INSERT INTO Lecturer VALUES ($1, $2, $3)",
+			conversionName(arrayLecturer[i].Fio), conversionName(arrayLecturer[i].ShortFIO), arrayLecturer[i].LecturerOid)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	fmt.Println("Table Lecturer update!")
 }
 
-func foundLecturer(messageUser string) (string, bool) {
-	arrayLecturer := requestLecturerJSON()
-	for i := 0; i < len(arrayLecturer); i++ {
-		if messageUser == arrayLecturer[i].Fio || messageUser == arrayLecturer[i].ShortFIO {
-			return strconv.Itoa(arrayLecturer[i].LecturerOid), true
-		}
+func foundAuditoriums(db *sql.DB, messageUser string) (string, bool) {
+	var AuditoriumOid string
+	err := db.QueryRow("SELECT AuditoriumOid FROM Auditoriums WHERE Name = $1", messageUser).Scan(&AuditoriumOid)
+	switch {
+	case err == sql.ErrNoRows:
+		return "", false
+	case err != nil:
+		log.Fatalf("query error: %v\n", err)
+		return "", false
+	}
+	return AuditoriumOid, true
+}
+
+func foundGroups(db *sql.DB, messageUser string) (string, bool) {
+	var GroupOid string
+	err := db.QueryRow("SELECT GroupOid FROM Groups WHERE Name = $1", messageUser).Scan(&GroupOid)
+	switch {
+	case err == sql.ErrNoRows:
+		return "", false
+	case err != nil:
+		log.Fatalf("query error: %v\n", err)
+		return "", false
+	}
+	return GroupOid, true
+}
+
+func foundLecturer(db *sql.DB, messageUser string) (string, bool) {
+	var LecturerOid string
+	err := db.QueryRow("SELECT LecturerOid FROM Lecturer WHERE Fio = $1", messageUser).Scan(&LecturerOid)
+
+	switch {
+	case err != sql.ErrNoRows:
+		return LecturerOid, true
+	case err == sql.ErrNoRows:
+	case err != nil:
+		log.Fatalf("query error: %v\n", err)
+		return "", false
+	}
+
+	err = db.QueryRow("SELECT LecturerOid FROM Lecturer WHERE ShortFIO = $1", messageUser).Scan(&LecturerOid)
+	switch {
+	case err != sql.ErrNoRows:
+		return LecturerOid, true
+	case err == sql.ErrNoRows:
+	case err != nil:
+		log.Fatalf("query error: %v\n", err)
+		return "", false
 	}
 	return "", false
 }
@@ -342,10 +456,11 @@ func timeTableMessage(update *tgbotapi.Update, bot *tgbotapi.BotAPI, userInput U
 
 // REQUEST AND PARSING JSON FROM API
 const (
-	URL_REQUEST_LESSON          = "https://www.ugrasu.ru/api/directory/lessons?fromdate="
-	URL_REQUEST_LECTURER        = "https://www.ugrasu.ru/api/directory/lecturers"
-	URL_REQUEST_GROUPS          = "https://www.ugrasu.ru/api/directory/groups"
-	URL_REQUEST_AUDITORIUMS     = "https://www.ugrasu.ru/api/directory/auditoriums"
+	URL_REQUEST_LESSON      = "https://www.ugrasu.ru/api/directory/lessons?fromdate="
+	URL_REQUEST_LECTURER    = "https://www.ugrasu.ru/api/directory/lecturers"
+	URL_REQUEST_GROUPS      = "https://www.ugrasu.ru/api/directory/groups"
+	URL_REQUEST_AUDITORIUMS = "https://www.ugrasu.ru/api/directory/auditoriums"
+
 	GROUP_PARAMETR_REQUEST      = "&groupOid="
 	LECTURER_PARAMETR_REQUEST   = "&lectureroid="
 	AUDITORIUM_PARAMETR_REQUEST = "&auditoriumoid="
